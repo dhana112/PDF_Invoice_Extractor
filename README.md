@@ -13,7 +13,8 @@ PDF_Invoice_Extractor
     field_extractor.py
     output_formatter.py
   invoices/
-    Document2.pdf  
+    Document2.pdf
+    Img1.pdf  
   requirements.txt
   README.md
   LICENSE
