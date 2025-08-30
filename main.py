@@ -1,90 +1,50 @@
 import os
-import re
 import click
-
+import json
+import pandas as pd
 from utils.pdf_reader import extract_text_from_pdf
 from utils.field_extractor import extract_fields
-from utils.output_formatter import save_results
-
-SUPPORTED_EXTENSIONS = (".pdf",)  # PDFs only
-
-
-def looks_like_invoice(text: str) -> bool:
-    """
-    Quick heuristic to reject non-invoice PDFs:
-    - must contain 'invoice' somewhere OR
-    - contain a common invoice number pattern label
-    """
-    tl = text.lower()
-    if "invoice" in tl:
-        return True
-    if re.search(r"(invoice\s*(no|#)|inv\s*no|bill\s*no)", tl):
-        return True
-    return False
-
 
 @click.command()
-@click.option(
-    "--input_path",
-    required=True,
-    help="Path to a folder OR a single PDF file",
-)
-@click.option(
-    "--output_file",
-    required=True,
-    help="Output file (.json or .csv)",
-)
-def process_invoices(input_path: str, output_file: str):
+@click.option("--input_path", required=True, help="Path to input PDF or folder containing PDFs")
+@click.option("--output_file", required=True, help="Output file (results.json or results.csv)")
+@click.option("--mode", type=click.Choice(["regex", "llm"]), default="regex", help="Extraction mode: regex or llm")
+def process_invoices(input_path, output_file, mode):
     results = []
 
-    # Detect single file vs folder
-    if os.path.isfile(input_path):
-        files = [os.path.basename(input_path)]
-        base_path = os.path.dirname(input_path)
+    # If input_path is a directory, process all files inside
+    if os.path.isdir(input_path):
+        files = [os.path.join(input_path, f) for f in os.listdir(input_path) if f.lower().endswith(".pdf")]
     else:
-        files = os.listdir(input_path)
-        base_path = input_path
-
-    processed = 0
-    skipped = 0
+        files = [input_path]
 
     for file in files:
-        if not file.lower().endswith(SUPPORTED_EXTENSIONS):
-            print(f"⚠️  Skipped unsupported file (PDFs only): {file}")
+        print(f"📄 Processing: {file}")
+        text = extract_text_from_pdf(file)
+        if not text.strip():
+            print(f"⚠️ Skipped empty or unreadable file: {file}")
             continue
 
-        file_path = os.path.join(base_path, file)
-        print(f"📄 Processing: {file_path}")
+        fields = extract_fields(text, os.path.basename(file), mode=mode)
 
-        try:
-            text = extract_text_from_pdf(file_path)
+        # Only keep if recognized as an invoice
+        if fields.get("doc_type") == "invoice":
+            results.append(fields)
+        else:
+            print(f"❌ Invalid input (not recognized as an invoice): {os.path.basename(file)}")
 
-            # Reject non-invoices explicitly
-            if not looks_like_invoice(text):
-                print(f"❌ Invalid input (not recognized as an invoice): {file}")
-                skipped += 1
-                continue
+    # Save results
+    if output_file.endswith(".json"):
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2)
+    elif output_file.endswith(".csv"):
+        df = pd.DataFrame(results)
+        df.to_csv(output_file, index=False)
+    else:
+        print("⚠️ Unsupported output format. Use .json or .csv")
 
-            fields = extract_fields(text, source_file=file)
-
-            # If we at least have invoice_number or vendor_name, we’ll keep it
-            if any([fields.get("invoice_number"), fields.get("vendor_name")]):
-                results.append(fields)
-                processed += 1
-            else:
-                print(f"❌ Invalid input (no key fields found): {file}")
-                skipped += 1
-
-        except Exception as e:
-            print(f"⚠️  Error processing {file}: {e}")
-            skipped += 1
-
-    # Save aggregated results
-    save_results(results, output_file)
-
-    print(f"\n✅ Done. Processed: {processed} | Skipped/Invalid: {skipped}")
+    print(f"\n✅ Done. Processed: {len(results)}")
     print(f"➡️  Output saved to: {output_file}")
-
 
 if __name__ == "__main__":
     process_invoices()

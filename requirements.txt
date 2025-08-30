@@ -11,6 +11,8 @@ PyMuPDF==1.26.4   # modern, fast PDF text & image extractor
 pytesseract==0.3.10  # OCR for scanned PDFs/images
 Pillow==10.3.0       # image processing support for OCR
 
+# LLM
+openai==1.44.0
 
 
 
