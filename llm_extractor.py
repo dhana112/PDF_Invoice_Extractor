@@ -1,110 +1,60 @@
-import re
-import logging
-import openai
-import json
 import os
+import json
+import logging
+import re
+import google.generativeai as genai
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+# Load API key
+API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=API_KEY)
 
-# Load API key from environment variable
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Use a Gemini model (16k tokens, safe for invoices)
+MODEL_NAME = "gemini-1.5-flash"
+model = genai.GenerativeModel(MODEL_NAME)
 
-def extract_fields(text: str, source_file: str = None, mode: str = "regex") -> dict:
-    """
-    Extract invoice fields using either regex rules (default) or LLM.
-    """
-    if mode == "llm":
-        return extract_with_llm(text, source_file)
-
-    # ---------- Regex Mode ----------
-    result = {
-        "doc_type": "invoice",
-        "invoice_number": None,
-        "invoice_date": None,
-        "vendor_name": None,
-        "total_amount": None,
-        "currency": None,
-        "source_file": source_file
-    }
-
-    # Invoice number
-    m = re.search(r"(?:Invoice\s*(?:No|#)?[:\-]?\s*|Inv\s*No[:\-]?\s*|Bill\s*No[:\-]?\s*)([A-Za-z0-9\-\/]+)", text, re.IGNORECASE)
-    if m and "@" not in m.group(1):  
-        result["invoice_number"] = m.group(1).strip()
-
-    # Date
-    m = re.search(r"(?:Date|Dated|Invoice\s*Date)[:\-]?\s*([A-Za-z]{3,9}\s*\d{1,2},?\s*\d{4})", text, re.IGNORECASE)
-    if m:
-        result["invoice_date"] = m.group(1).strip()
-
-    # Vendor
-    m = re.search(r"([A-Za-z0-9\s,&\.-]+(?:Ltd|Limited|Pvt|LLP|Inc|Company|Corporation))", text, re.IGNORECASE)
-    if m:
-        result["vendor_name"] = m.group(1).strip()
-
-    # Total amount
-    m = re.search(r"(?:Total|Amount\s*Due|Invoice\s*Total|Balance\s*Due)[:\-]?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
-    if m:
-        result["total_amount"] = float(m.group(1).replace(",", ""))
-
-    # Currency
-    m = re.search(r"\b(GBP|USD|INR|EUR|CAD|AUD)\b", text, re.IGNORECASE)
-    if m:
-        result["currency"] = m.group(1).upper()
-    elif "£" in text:
-        result["currency"] = "GBP"
-    elif "$" in text:
-        result["currency"] = "USD"
-    elif "₹" in text:
-        result["currency"] = "INR"
-
-    return result
-
-
-def extract_with_llm(text: str, source_file: str):
-    """
-    Use OpenAI LLM to extract fields from invoice text.
-    """
+def llm_extract_invoice(text: str, source_file: str = None) -> dict:
     prompt = f"""
-    Extract the following fields from this invoice text and return JSON only:
-    - Invoice Number
-    - Invoice Date
-    - Vendor Name
-    - Total Amount
-    - Currency
+    You are an AI that extracts structured data from invoices.
+    Return output strictly in JSON with the following keys:
+    - doc_type (always "invoice")
+    - invoice_number
+    - invoice_date
+    - vendor_name
+    - total_amount
+    - currency
 
-    Invoice Text:
+    Invoice text:
     {text}
     """
 
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
+        response = model.generate_content(prompt)
+        raw_text = response.text.strip()
 
-        content = response.choices[0].message["content"].strip()
-        extracted = json.loads(content)
+        logging.info(f"[LLM Raw Response] {raw_text}")
 
-        return {
-            "doc_type": "invoice",
-            "invoice_number": extracted.get("Invoice Number"),
-            "invoice_date": extracted.get("Invoice Date"),
-            "vendor_name": extracted.get("Vendor Name"),
-            "total_amount": extracted.get("Total Amount"),
-            "currency": extracted.get("Currency"),
-            "source_file": source_file
-        }
+        # ✅ 1. Remove markdown code fences like ```json ... ```
+        clean_text = re.sub(r"^```json\s*|\s*```$", "", raw_text, flags=re.DOTALL).strip()
+
+        # ✅ 2. Extract JSON if there’s extra explanation before/after
+        match = re.search(r"\{.*\}", clean_text, re.DOTALL)
+        if match:
+            clean_text = match.group(0)
+
+        # ✅ 3. Load JSON safely
+        result = json.loads(clean_text)
+
     except Exception as e:
-        logging.error(f"[{source_file}] LLM extraction failed: {e}")
-        return {
+        logging.error(f"LLM extraction failed for {source_file}: {e}")
+        result = {
             "doc_type": "invoice",
             "invoice_number": None,
             "invoice_date": None,
             "vendor_name": None,
             "total_amount": None,
             "currency": None,
-            "source_file": source_file
+            "source_file": source_file,
         }
+
+    result["source_file"] = source_file
+    return result

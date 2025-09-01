@@ -1,20 +1,22 @@
 # PDF Invoice Extractor 
 
 ## Objective
-Extract structured fields (**invoice number, date, vendor name, total amount, currency**) from **Document2**-style invoices.  
-Supports **digital PDFs** and **scanned PDFs** (via OCR). Batch mode optional.
+Build a Python-based solution to extract structured fields (**invoice number, date, vendor name, total amount, currency**) from **Document2**-style invoices.  
+Supports **digital PDFs**, **scanned PDFs** (via OCR), and **LLM-based extraction** for comparison.
 
 ## Project Structure
+
 ```
 PDF_Invoice_Extractor
   main.py
+  llm_extractor.py
   utils/
     pdf_reader.py
     field_extractor.py
     output_formatter.py
   invoices/
     Document2.pdf
-    Img1.pdf  
+    Img1.pdf
   requirements.txt
   README.md
   LICENSE
@@ -28,21 +30,28 @@ PDF_Invoice_Extractor
          |
          v
 +---------------------+
-| pdf_reader.py       | → Extract text (PyPDF2 → OCR fallback)
+| pdf_reader.py       | → Extract text (PyMuPDF → OCR fallback with Tesseract)
 +---------------------+
          |
          v
 +---------------------+
-| field_extractor.py  | → Regex rules:
-|                     |   - Invoice No
-|                     |   - Date
-|                     |   - Vendor
-|                     |   - Total + Currency
+| field_extractor.py  | → Extraction modes:
+|                     |   - **Regex** rules:
+|                     |       - Invoice No
+|                     |       - Date
+|                     |       - Vendor
+|                     |       - Total + Currency
+|                     |   - **LLM** (Gemini 1.5) structured JSON extraction
 +---------------------+
          |
          v
 +---------------------+
-| output_formatter.py | → Save as JSON / CSV (pandas)
+| llm_extractor.py    | → Sends text to LLM, receives structured JSON
++---------------------+
+         |
+         v
++---------------------+
+| output_formatter.py | → Save as JSON / CSV (flattened for differences & accuracy)
 +---------------------+
          |
          v
@@ -68,13 +77,16 @@ pip install -r requirements.txt
 python main.py --input_path .\invoices\Document2.pdf --output_file result.json
 
 # Single file - CSV
-python main.py --input_path .\invoices\Document2.pdf --output_file result.json
+python main.py --input_path .\invoices\Document2.pdf --output_file result.csv
 
 # Batch folder - JSON
 python main.py --input_path .\invoices --output_file results.json
 
 # Batch folder - CSV
 python main.py --input_path .\invoices --output_file results.csv
+
+# Optional: specify ground truth for accuracy comparison
+python main.py --input_path .\invoices --output_file results.csv --ground_truth ground_truth.json
 
 ```
 
@@ -88,15 +100,28 @@ If a non-invoice PDF is given, output will contain:
 ```json
 [
   {
-    "doc_type": "invoice",
-    "invoice_number": "S2401-34",
-    "invoice_date": "05 Jan 2024",
-    "vendor_name": "Renishaw UK Sales Limited",
-    "total_amount": "27743.11",
-    "currency": "GBP",
-    "source_file": "Document2.pdf"
+    "source_file": "Document2.pdf",
+    "regex": {
+        "doc_type": "invoice",
+        "invoice_number": "S2401-34",
+        "invoice_date": "05 Jan 2024",
+        "vendor_name": "Renishaw UK Sales Limited",
+        "total_amount": 27743.11,
+        "currency": "GBP"
+    },
+    "llm": {
+        "doc_type": "invoice",
+        "invoice_number": "S2401-34",
+        "invoice_date": "05 Jan 2024",
+        "vendor_name": "Renishaw UK Sales Limited",
+        "total_amount": 27743.11,
+        "currency": "GBP"
+    },
+    "differences": {},
+    "accuracy": {"regex": 100.0, "llm": 100.0}
   }
 ]
+
 ```
 
 ## Tools & Rationale
@@ -115,6 +140,7 @@ If a non-invoice PDF is given, output will contain:
 | PyMuPDF         | Very High          | N/A                | Fast  | Better layout handling      |
 | invoice2data    | High (with templates) | Low-Med         | Med   | Template/ML extraction      |
 | Tesseract (OCR) | N/A                | Medium             | Slow  | Needs good image quality    |
+
 
 ## Security
 - No PII/API keys in code

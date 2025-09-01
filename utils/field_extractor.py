@@ -1,18 +1,42 @@
 import re
 import logging
 import os
-import json
-from dotenv import load_dotenv
-from openai import OpenAI
+from PIL import Image
+import fitz  # PyMuPDF
+import pytesseract
 
-# ✅ Load environment variables from .env file
-load_dotenv()
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-# ✅ Initialize OpenAI client (new SDK)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# ✅ Configure Tesseract path (adjust if installed elsewhere)
+# Example default Windows path:
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """
+    Extract text from PDF using PyMuPDF.
+    If page has no text, fallback to OCR using pytesseract.
+    """
+    doc = fitz.open(pdf_path)
+    full_text = ""
+
+    for page_number, page in enumerate(doc, start=1):
+        text = page.get_text()
+        if text.strip():
+            full_text += text + "\n"
+        else:
+            # OCR fallback
+            pix = page.get_pixmap()
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            ocr_text = pytesseract.image_to_string(img)
+            if ocr_text.strip():
+                logging.info(f"[{pdf_path}][Page {page_number}] OCR text extracted.")
+            else:
+                logging.warning(f"[{pdf_path}][Page {page_number}] No text found via OCR.")
+            full_text += ocr_text + "\n"
+
+    return full_text
 
 
 def extract_fields(text: str, source_file: str = None, mode: str = "regex") -> dict:
@@ -128,28 +152,12 @@ def extract_fields(text: str, source_file: str = None, mode: str = "regex") -> d
         return result  # ✅ return at end of regex block
 
     elif mode == "llm":
-        prompt = f"""
-        Extract invoice details from the text below and return JSON with keys:
-        invoice_number, invoice_date, vendor_name, total_amount, currency.
-
-        Text:
-        {text}
-        """
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are an invoice parser."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0,
-            )
-            content = response.choices[0].message.content
-            parsed = json.loads(content)
-            result.update(parsed)
+            from llm_extractor import llm_extract_invoice
+            return llm_extract_invoice(text, source_file)
         except Exception as e:
             logging.error(f"[{source_file}] LLM extraction failed: {e}")
-        return result  # ✅ return at end of LLM block
+            return result  # return empty regex-like structure if LLM fails
 
     else:
         raise ValueError(f"Unsupported extraction mode: {mode}")

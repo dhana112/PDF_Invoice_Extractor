@@ -7,19 +7,11 @@ pandas==2.2.2
 tabulate==0.9.0
 
 # PDF Processing (text + scanned)
-PyMuPDF==1.26.4   # modern, fast PDF text & image extractor
-pytesseract==0.3.10  # OCR for scanned PDFs/images
-Pillow==10.3.0       # image processing support for OCR
+PyMuPDF==1.26.4       # modern, fast PDF text & image extractor
+pytesseract==0.3.10   # OCR for scanned PDFs/images
+Pillow==10.3.0        # image processing support for OCR
 
-# LLM
-openai==1.44.0
-
-
-
-
-
-
-
-
-
-
+# LLM (Hugging Face)
+transformers==4.41.0
+torch==2.3.1
+sentencepiece==0.1.99
